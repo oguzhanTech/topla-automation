@@ -17,6 +17,7 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -257,15 +258,48 @@ public final class AmazonProductPageScraper {
     }
 
     private static String extractDescriptionSnippet(WebDriver driver) {
-        try {
-            List<WebElement> bullets = driver.findElements(By.cssSelector("#feature-bullets ul li"));
-            if (bullets.isEmpty()) {
-                return null;
+        String fromBullets = extractFeatureBulletText(driver);
+        if (fromBullets != null) {
+            return fromBullets;
+        }
+        for (By scope : List.of(
+                By.cssSelector("#bookDescription_feature_div .a-expander-content"),
+                By.cssSelector("#bookDescription_feature_div"),
+                By.cssSelector("#productDescription_feature_div .a-expander-content"),
+                By.cssSelector("#productDescription_feature_div"),
+                By.cssSelector("#productDescription"))) {
+            String block = firstMeaningfulBlock(driver, scope);
+            if (block != null) {
+                return clipDescription(block, 600);
             }
-            StringBuilder sb = new StringBuilder();
-            for (WebElement li : bullets) {
-                String t = li.getText().trim();
-                if (!t.isEmpty()) {
+        }
+        return metaDescriptionSnippet(driver);
+    }
+
+    /** "About this item" — many books / some ASINs have no bullets; use other fallbacks. */
+    private static String extractFeatureBulletText(WebDriver driver) {
+        try {
+            List<By> bulletScopes = List.of(
+                    By.cssSelector("#feature-bullets ul li span.a-list-item"),
+                    By.cssSelector("#feature-bullets ul li"),
+                    By.cssSelector("#feature-bullets .a-expander-content span.a-list-item"),
+                    By.cssSelector("#feature-bullets .a-expander-content li")
+            );
+            for (By sel : bulletScopes) {
+                List<WebElement> bullets = driver.findElements(sel);
+                if (bullets.isEmpty()) {
+                    continue;
+                }
+                StringBuilder sb = new StringBuilder();
+                for (WebElement li : bullets) {
+                    String t = li.getText();
+                    if (t == null) {
+                        continue;
+                    }
+                    t = t.replace('\u00a0', ' ').trim();
+                    if (t.isEmpty() || t.toLowerCase(Locale.ROOT).startsWith("see all")) {
+                        continue;
+                    }
                     if (sb.length() > 0) {
                         sb.append(' ');
                     }
@@ -274,15 +308,59 @@ public final class AmazonProductPageScraper {
                         break;
                     }
                 }
+                String full = sb.toString().trim();
+                if (!full.isEmpty()) {
+                    return clipDescription(full, 600);
+                }
             }
-            String full = sb.toString().trim();
-            if (full.length() > 600) {
-                return full.substring(0, 600) + "…";
-            }
-            return full.isEmpty() ? null : full;
-        } catch (Exception e) {
-            return null;
+        } catch (Exception ignored) {
+            // ignore
         }
+        return null;
+    }
+
+    private static String firstMeaningfulBlock(WebDriver driver, By scope) {
+        try {
+            for (WebElement el : driver.findElements(scope)) {
+                String t = el.getText();
+                if (t == null) {
+                    continue;
+                }
+                t = t.replace('\u00a0', ' ').trim().replaceAll("\\s+", " ");
+                if (t.length() >= 25) {
+                    return t;
+                }
+            }
+        } catch (Exception ignored) {
+            // ignore
+        }
+        return null;
+    }
+
+    private static String metaDescriptionSnippet(WebDriver driver) {
+        try {
+            List<WebElement> metas = driver.findElements(By.cssSelector("meta[name='description']"));
+            for (WebElement meta : metas) {
+                String c = meta.getAttribute("content");
+                if (c == null) {
+                    continue;
+                }
+                c = c.replace('\u00a0', ' ').trim().replaceAll("\\s+", " ");
+                if (c.length() >= 40) {
+                    return clipDescription(c, 600);
+                }
+            }
+        } catch (Exception ignored) {
+            // ignore
+        }
+        return null;
+    }
+
+    private static String clipDescription(String full, int maxLen) {
+        if (full.length() <= maxLen) {
+            return full;
+        }
+        return full.substring(0, maxLen) + "…";
     }
 
     /**
