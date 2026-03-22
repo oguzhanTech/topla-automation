@@ -4,6 +4,7 @@ import online.topla.ingestion.config.AppConfig;
 import online.topla.ingestion.model.NormalizedDeal;
 import online.topla.ingestion.scraper.base.BaseScraper;
 import org.openqa.selenium.By;
+import org.openqa.selenium.JavascriptExecutor;
 import org.openqa.selenium.WebDriver;
 import org.openqa.selenium.WebElement;
 import org.slf4j.Logger;
@@ -47,6 +48,8 @@ public class AmazonDealsHubScraper extends BaseScraper {
 
     @Override
     public List<NormalizedDeal> scrapeDeals() {
+        // İlk viewport dışındaki kartlar genelde lazy-load; kaydırmadan aynı küçük havuz tekrar tekrar seçilir.
+        scrollHubToLoadMoreDeals();
         List<WebElement> anchors = driver.findElements(PRODUCT_LINKS);
         LinkedHashSet<String> discounted = new LinkedHashSet<>();
         LinkedHashSet<String> anyLink = new LinkedHashSet<>();
@@ -63,19 +66,31 @@ public class AmazonDealsHubScraper extends BaseScraper {
             }
         }
 
-        List<String> pool = new ArrayList<>(discounted.isEmpty() ? anyLink : discounted);
+        /*
+         * Eski mantık: discounted boş değilse SADECE discounted kullanılıyordu. Heuristik çoğu kartta
+         * "indirimli" sayılmayınca havuz 5–10 ASIN'e düşüyor; TARGET_COUNT=5 ise havuz==5 olduğunda
+         * shuffle sırayı değiştirir ama seçilen *küme* her koşuda aynı 5 ürün olur (olasılık değil).
+         * Fırsat sayfasındaki tüm benzersiz /dp/ linkleri kullan; çeşitlilik için havuz büyük kalsın.
+         */
+        List<String> pool = new ArrayList<>(anyLink);
         if (pool.isEmpty()) {
             log.warn("Amazon hub: no /dp/ links found on page {}", hubUrl);
             return List.of();
         }
-        if (discounted.isEmpty()) {
-            log.warn("Amazon hub: no discount heuristics matched; using any product links on page ({} candidates)", pool.size());
-        }
+        log.info(
+                "Amazon hub: {} benzersiz ürün linki (indirim heuristiği eşleşen: {})",
+                pool.size(),
+                discounted.size());
 
         Random rnd = randomSeed != null ? new Random(randomSeed) : new Random();
         Collections.shuffle(pool, rnd);
         int take = Math.min(targetCount, pool.size());
-        log.info("Amazon hub: selected {} of {} candidates (target {})", take, pool.size(), targetCount);
+        log.info(
+                "Amazon hub: {} adaydan {} seçildi (hedef {}), seed={}",
+                pool.size(),
+                take,
+                targetCount,
+                randomSeed != null ? randomSeed : "rastgele");
 
         List<NormalizedDeal> out = new ArrayList<>(take);
         for (int i = 0; i < take; i++) {
@@ -89,6 +104,31 @@ public class AmazonDealsHubScraper extends BaseScraper {
     @Override
     public String getSourceName() {
         return "Amazon";
+    }
+
+    /** Aşağı kaydırıp daha fazla /dp/ linkinin DOM'a girmesini bekler. */
+    private void scrollHubToLoadMoreDeals() {
+        if (!(driver instanceof JavascriptExecutor jse)) {
+            return;
+        }
+        try {
+            long lastHeight = 0;
+            for (int i = 0; i < 12; i++) {
+                jse.executeScript("window.scrollTo(0, document.body.scrollHeight);");
+                Thread.sleep(450);
+                long h = ((Number) jse.executeScript("return document.body.scrollHeight")).longValue();
+                if (h == lastHeight && i > 2) {
+                    break;
+                }
+                lastHeight = h;
+            }
+            jse.executeScript("window.scrollTo(0, 0);");
+            Thread.sleep(200);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        } catch (Exception ignored) {
+            // ignore
+        }
     }
 
     /**
