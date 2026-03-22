@@ -27,12 +27,15 @@ public final class DealValidator {
             b.add("sourceName is required");
         }
         if (deal.getCurrentPrice() == null) {
-            b.add("currentPrice is required");
+            b.add("deal_price (currentPrice) is required");
         } else if (deal.getCurrentPrice().compareTo(BigDecimal.ZERO) < 0) {
-            b.add("currentPrice must be non-negative");
+            b.add("deal_price must be non-negative");
         }
         if (deal.getScrapedAt() == null) {
             b.add("scrapedAt is required");
+        }
+        if (deal.getEndAt() == null) {
+            b.add("end_at is required (or set endDateUnknown to true for placeholder end)");
         }
         return b.build();
     }

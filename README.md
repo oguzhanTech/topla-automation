@@ -8,7 +8,7 @@ Topla web uygulamasından **bağımsız** çalışan bir Java servisi: harici e-
 |--------|----------|
 | `runner` | `DealIngestionApplication` — giriş noktası |
 | `service` | `IngestionOrchestrator` — scraper sırası, doğrulama, API çağrısı, hata izolasyonu |
-| `scraper` | `BaseScraper` + kaynak başına sınıflar (`sources/`) |
+| `scraper` | `BaseScraper` + kaynak başına sınıflar (`AmazonTrScraper`, `TrendyolScraper`, …) |
 | `driver` | `WebDriverFactory` — headless, tarayıcı seçimi |
 | `client` | `ToplaDealsImportClient` — `POST /internal/deals/import` |
 | `model` | `NormalizedDeal`, `DealImportRequest`, `ImportMetadata` |
@@ -19,7 +19,7 @@ Topla web uygulamasından **bağımsız** çalışan bir Java servisi: harici e-
 flowchart LR
   Main[DealIngestionApplication]
   Orch[IngestionOrchestrator]
-  Scraper[TrendyolScraper]
+  Scraper[Scrapers]
   WDF[WebDriverFactory]
   API[ToplaDealsImportClient]
   Main --> Orch
@@ -37,7 +37,9 @@ Zorunlu:
 
 İsteğe bağlı / önerilen:
 
-- `TOPLA_ACTOR_KEY` — mantıksal bot kimliği (ör. `topla_trendyol_bot`). Sunucu bu anahtarı API anahtarıyla **whitelist** üzerinden çözümler; rastgele kullanıcı ID’si kabul edilmez.
+- `TOPLA_ACTOR_KEY` — mantıksal bot kimliği (ör. `topla_trendyol_bot`, `topla_amazon_bot`). **deal-radar** tarafında `TOPLA_IMPORT_ACTOR_MAP` içinde aynı string → Supabase `auth.users` UUID eşlemesi tanımlı olmalı; istek gövdesinde ham kullanıcı UUID gönderilmez.
+- `INGESTION_SOURCES` — virgülle ayrılmış kaynaklar: `amazon`, `trendyol` (varsayılan: `amazon`).
+- `AMAZON_START_URL` — Amazon scraper’ın açacağı URL (ürün sayfası önerilir; yoksa `https://www.amazon.com.tr/`).
 - `HEADLESS` — `true` / `false` (varsayılan: `true`)
 - `BROWSER` — `chrome`, `firefox`, `edge` (varsayılan: `chrome`)
 - `PAGE_LOAD_TIMEOUT_MS`, `IMPLICIT_WAIT_MS`
@@ -65,26 +67,27 @@ Yerel geliştirme için proje köküne `.env` kopyalayın: [`.env.example`](.env
 - **Endpoint:** `POST {TOPLA_API_BASE_URL}/internal/deals/import`
 - **Kimlik doğrulama:** `Authorization: Bearer <TOPLA_IMPORT_API_KEY>`
 
-### Örnek JSON gövdesi
+### Örnek JSON gövdesi (deal-radar uyumlu alan adları)
+
+`NormalizedDeal` Jackson ile `deal_price`, `external_url`, `start_at`, `end_at`, `end_date_unknown` vb. **snake_case** olarak serileştirilir; deal-radar `POST /internal/deals/import` route’u ile uyumludur.
 
 ```json
 {
   "deal": {
     "title": "Örnek ürün",
     "description": "Kısa açıklama",
-    "currentPrice": 99.99,
-    "originalPrice": 149.99,
-    "discountRate": 33.33,
-    "imageUrl": "https://cdn.example.com/img.jpg",
-    "productUrl": "https://www.trendyol.com/...",
-    "sourceName": "Trendyol",
+    "deal_price": 99.99,
+    "original_price": 149.99,
+    "discount_percent": 33.33,
+    "image_url": "https://cdn.example.com/img.jpg",
+    "external_url": "https://www.trendyol.com/...",
+    "provider": "Trendyol",
     "category": "Elektronik",
-    "brand": "Demo",
-    "currency": "TRY",
-    "scrapedAt": "2026-03-22T12:00:00Z",
-    "externalId": "ty-12345",
-    "rating": 4.2,
-    "reviewCount": 128
+    "currency": "TL",
+    "country": "GLOBAL",
+    "start_at": "2026-03-22T00:00:00.000Z",
+    "end_at": "2026-03-29T23:59:59.000Z",
+    "end_date_unknown": false
   },
   "actorKey": "topla_trendyol_bot",
   "sourceName": "Trendyol",
@@ -99,7 +102,13 @@ Yerel geliştirme için proje köküne `.env` kopyalayın: [`.env.example`](.env
 }
 ```
 
+Bilinmeyen bitiş için scraper `end_date_unknown: true` bırakabilir; `DealImportPreparer` `end_at` için uzak bir tarih doldurur (deal-radar `deal.end_at` zorunluluğu).
+
 Sunucu, `metadata` ile birlikte görünür oluşturucuyu (bot) ve teknik iz bilgisini kalıcı olarak saklayacak şekilde tasarlanmalıdır.
+
+### deal-radar (Topla) yerel çalıştırma — kısa kontrol listesi
+
+Import’un uçtan uca çalışması için **deal-radar** projesinde en azından: `TOPLA_IMPORT_API_KEY`, `TOPLA_IMPORT_ACTOR_MAP` (veya varsayılan bot + allowlist), `SUPABASE_SERVICE_ROLE_KEY`, `NEXT_PUBLIC_SUPABASE_URL`. Ayrıntılı adımlar ve `curl` örneği: deal-radar içinde `docs/INTERNAL_IMPORT.md`.
 
 ## Nasıl çalıştırılır
 

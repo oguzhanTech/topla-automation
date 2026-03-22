@@ -39,7 +39,8 @@ public class TrendyolScraper extends BaseScraper {
         deal.setCurrentPrice(new BigDecimal("99.99"));
         deal.setOriginalPrice(new BigDecimal("149.99"));
         deal.setDiscountRate(new BigDecimal("33.33"));
-        deal.setCurrency("TRY");
+        deal.setCurrency("TL");
+        deal.setProvider("Trendyol");
         deal.setSourceName(getSourceName());
         deal.setCategory("demo");
         deal.setBrand("demo-brand");
@@ -49,6 +50,8 @@ public class TrendyolScraper extends BaseScraper {
         deal.setExternalId("trendyol-demo-1");
         deal.setRating(new BigDecimal("4.2"));
         deal.setReviewCount(128);
+        deal.setEndDateUnknown(true);
+        deal.setEndAt(null);
         out.add(deal);
         return out;
     }

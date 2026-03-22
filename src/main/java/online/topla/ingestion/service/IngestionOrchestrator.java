@@ -8,14 +8,17 @@ import online.topla.ingestion.model.ImportMetadata;
 import online.topla.ingestion.model.NormalizedDeal;
 import online.topla.ingestion.scraper.base.BaseScraper;
 import online.topla.ingestion.util.DealValidator;
+import online.topla.ingestion.util.ImportDedupKey;
 import online.topla.ingestion.util.ValidationResult;
 import org.openqa.selenium.WebDriver;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Objects;
+import java.util.Set;
 import java.util.UUID;
 import java.util.function.Function;
 
@@ -40,6 +43,7 @@ public class IngestionOrchestrator {
 
     public void run(List<Function<WebDriver, ? extends BaseScraper>> scraperFactories) {
         String runId = UUID.randomUUID().toString();
+        Set<String> seenKeysThisRun = new HashSet<>();
         log.info("Ingestion run started runId={} scrapers={}", runId, scraperFactories.size());
 
         for (Function<WebDriver, ? extends BaseScraper> factory : scraperFactories) {
@@ -51,7 +55,7 @@ public class IngestionOrchestrator {
                 List<NormalizedDeal> deals = scraper.scrapeDeals();
                 log.info("Source={} scraped {} raw deals", source, deals.size());
                 for (NormalizedDeal deal : deals) {
-                    processOneDeal(runId, source, deal);
+                    processOneDeal(runId, source, deal, seenKeysThisRun);
                 }
             } catch (Exception e) {
                 log.error("Scraper failed for source={} — continuing with next source", source, e);
@@ -66,10 +70,16 @@ public class IngestionOrchestrator {
         log.info("Ingestion run finished runId={}", runId);
     }
 
-    private void processOneDeal(String runId, String source, NormalizedDeal deal) {
+    private void processOneDeal(String runId, String source, NormalizedDeal deal, Set<String> seenKeysThisRun) {
+        DealImportPreparer.applyImportDefaults(deal);
         ValidationResult vr = DealValidator.validate(deal);
         if (!vr.isValid()) {
             log.warn("Skipping invalid deal from {}: {}", source, vr.getErrors());
+            return;
+        }
+        String dedupKey = ImportDedupKey.of(deal);
+        if (!seenKeysThisRun.add(dedupKey)) {
+            log.info("Skipping duplicate deal in this run key={} source={} title={}", dedupKey, source, deal.getTitle());
             return;
         }
 
@@ -94,9 +104,20 @@ public class IngestionOrchestrator {
         }
     }
 
-    public static List<Function<WebDriver, ? extends BaseScraper>> defaultScrapers() {
+    public static List<Function<WebDriver, ? extends BaseScraper>> scrapersForConfig(AppConfig config) {
         List<Function<WebDriver, ? extends BaseScraper>> list = new ArrayList<>();
-        list.add(online.topla.ingestion.scraper.sources.TrendyolScraper::new);
+        for (String token : config.getIngestionSourceTokens()) {
+            switch (token) {
+                case "amazon" -> list.add(d -> new online.topla.ingestion.scraper.sources.AmazonTrScraper(d,
+                        config.getAmazonStartUrl()));
+                case "trendyol" -> list.add(online.topla.ingestion.scraper.sources.TrendyolScraper::new);
+                default -> log.warn("Unknown INGESTION_SOURCES token, skipping: {}", token);
+            }
+        }
+        if (list.isEmpty()) {
+            log.warn("No scrapers configured; falling back to Trendyol demo scraper");
+            list.add(online.topla.ingestion.scraper.sources.TrendyolScraper::new);
+        }
         return list;
     }
 }

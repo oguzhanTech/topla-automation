@@ -3,6 +3,10 @@ package online.topla.ingestion.config;
 import io.github.cdimascio.dotenv.Dotenv;
 
 import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
+import java.util.Locale;
 import java.util.Optional;
 import java.util.function.Function;
 
@@ -22,6 +26,8 @@ public final class AppConfig {
     private final long apiRetryDelayMs;
     private final int apiConnectTimeoutMs;
     private final int apiRequestTimeoutMs;
+    private final List<String> ingestionSourceTokens;
+    private final String amazonStartUrl;
 
     private AppConfig(Builder b) {
         this.apiBaseUrl = b.apiBaseUrl;
@@ -35,6 +41,8 @@ public final class AppConfig {
         this.apiRetryDelayMs = b.apiRetryDelayMs;
         this.apiConnectTimeoutMs = b.apiConnectTimeoutMs;
         this.apiRequestTimeoutMs = b.apiRequestTimeoutMs;
+        this.ingestionSourceTokens = List.copyOf(b.ingestionSourceTokens);
+        this.amazonStartUrl = b.amazonStartUrl;
     }
 
     public static AppConfig load() {
@@ -70,6 +78,12 @@ public final class AppConfig {
         int connectTimeout = (int) parseLong(env, "API_CONNECT_TIMEOUT_MS", 10_000L);
         int requestTimeout = (int) parseLong(env, "API_REQUEST_TIMEOUT_MS", 30_000L);
 
+        List<String> sources = parseIngestionSources(env);
+        String amazonUrl = Optional.ofNullable(env.apply("AMAZON_START_URL"))
+                .filter(s -> !s.isBlank())
+                .map(String::trim)
+                .orElse("https://www.amazon.com.tr/");
+
         return new Builder()
                 .apiBaseUrl(trimTrailingSlash(base))
                 .importApiKey(key)
@@ -82,7 +96,24 @@ public final class AppConfig {
                 .apiRetryDelayMs(retryDelay)
                 .apiConnectTimeoutMs(connectTimeout)
                 .apiRequestTimeoutMs(requestTimeout)
+                .ingestionSourceTokens(sources)
+                .amazonStartUrl(amazonUrl)
                 .build();
+    }
+
+    private static List<String> parseIngestionSources(Function<String, String> env) {
+        String raw = env.apply("INGESTION_SOURCES");
+        if (raw == null || raw.isBlank()) {
+            return List.of("amazon");
+        }
+        List<String> out = new ArrayList<>();
+        for (String part : raw.split(",")) {
+            String t = part.trim().toLowerCase(Locale.ROOT);
+            if (!t.isEmpty()) {
+                out.add(t);
+            }
+        }
+        return out.isEmpty() ? List.of("amazon") : Collections.unmodifiableList(out);
     }
 
     private static String trimTrailingSlash(String url) {
@@ -152,6 +183,14 @@ public final class AppConfig {
         return apiRequestTimeoutMs;
     }
 
+    public List<String> getIngestionSourceTokens() {
+        return ingestionSourceTokens;
+    }
+
+    public String getAmazonStartUrl() {
+        return amazonStartUrl;
+    }
+
     public static final class Builder {
         private String apiBaseUrl;
         private String importApiKey;
@@ -164,6 +203,8 @@ public final class AppConfig {
         private long apiRetryDelayMs = 1_000L;
         private int apiConnectTimeoutMs = 10_000;
         private int apiRequestTimeoutMs = 30_000;
+        private List<String> ingestionSourceTokens = List.of("amazon");
+        private String amazonStartUrl = "https://www.amazon.com.tr/";
 
         public Builder apiBaseUrl(String apiBaseUrl) {
             this.apiBaseUrl = apiBaseUrl;
@@ -217,6 +258,16 @@ public final class AppConfig {
 
         public Builder apiRequestTimeoutMs(int apiRequestTimeoutMs) {
             this.apiRequestTimeoutMs = apiRequestTimeoutMs;
+            return this;
+        }
+
+        public Builder ingestionSourceTokens(List<String> ingestionSourceTokens) {
+            this.ingestionSourceTokens = ingestionSourceTokens;
+            return this;
+        }
+
+        public Builder amazonStartUrl(String amazonStartUrl) {
+            this.amazonStartUrl = amazonStartUrl;
             return this;
         }
 

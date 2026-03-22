@@ -26,7 +26,7 @@ public final class DealIngestionApplication {
             ToplaDealsImportClient client = new ToplaDealsImportClient(config);
             IngestionOrchestrator orchestrator = new IngestionOrchestrator(config, wdf, client);
 
-            List<Function<WebDriver, ? extends BaseScraper>> scrapers = IngestionOrchestrator.defaultScrapers();
+            List<Function<WebDriver, ? extends BaseScraper>> scrapers = IngestionOrchestrator.scrapersForConfig(config);
             orchestrator.run(scrapers);
         } catch (Exception e) {
             log.error("Ingestion failed", e);

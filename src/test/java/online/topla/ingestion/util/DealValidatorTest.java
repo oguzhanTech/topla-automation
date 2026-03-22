@@ -1,10 +1,12 @@
 package online.topla.ingestion.util;
 
 import online.topla.ingestion.model.NormalizedDeal;
+import online.topla.ingestion.service.DealImportPreparer;
 import org.junit.jupiter.api.Test;
 
 import java.math.BigDecimal;
 import java.time.Instant;
+import java.time.temporal.ChronoUnit;
 
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -19,6 +21,8 @@ class DealValidatorTest {
         d.setSourceName("S");
         d.setCurrentPrice(BigDecimal.ONE);
         d.setScrapedAt(Instant.now());
+        d.setEndAt(Instant.now().plus(1, ChronoUnit.DAYS));
+        DealImportPreparer.applyImportDefaults(d);
         assertTrue(DealValidator.validate(d).isValid());
     }
 
@@ -29,6 +33,8 @@ class DealValidatorTest {
         d.setSourceName("S");
         d.setCurrentPrice(BigDecimal.ONE);
         d.setScrapedAt(Instant.now());
+        d.setEndAt(Instant.now().plus(1, ChronoUnit.DAYS));
+        DealImportPreparer.applyImportDefaults(d);
         assertFalse(DealValidator.validate(d).isValid());
     }
 }
