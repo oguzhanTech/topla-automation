@@ -30,7 +30,9 @@ public class DealImportSteps {
     private List<NormalizedDeal> preparedDeals;
     private List<ValidationResult> batchResults;
 
-    /** Documented alignment with {@code AMAZON_DEALS_TARGET_COUNT} for hub mode. */
+    /**
+     * Documented alignment with {@code AMAZON_DEALS_TARGET_COUNT} for hub mode.
+     */
     private int hubBatchSize;
 
     @Before

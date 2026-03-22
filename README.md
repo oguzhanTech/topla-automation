@@ -2,6 +2,8 @@
 
 Topla web uygulamasından **bağımsız** çalışan bir Java servisi: harici e-ticaret sitelerinden Selenium ile deal verisi toplar, ortak modele normalize eder ve **yalnızca iç API** üzerinden Topla’ya gönderir. Topla UI’si otomatik edilmez; veritabanına doğrudan bağlanılmaz.
 
+Üç senaryo için sadeleştirilmiş Türkçe kullanım: [README.tr.md](README.tr.md).
+
 ## Mimari özeti
 
 | Katman | Açıklama |
