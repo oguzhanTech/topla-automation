@@ -2,6 +2,7 @@ package online.topla.ingestion.scraper.sources;
 
 import online.topla.ingestion.model.NormalizedDeal;
 import org.openqa.selenium.By;
+import org.openqa.selenium.JavascriptExecutor;
 import org.openqa.selenium.WebDriver;
 import org.openqa.selenium.WebElement;
 import org.openqa.selenium.support.ui.ExpectedConditions;
@@ -27,6 +28,56 @@ public final class AmazonProductPageScraper {
 
     private static final By PRODUCT_TITLE = By.cssSelector("#productTitle");
     private static final By LANDING_IMAGE = By.cssSelector("#landingImage, #imgTagWrapperId img");
+
+    /**
+     * Picks the largest nearly-square image in the gallery (Topla expects square cards).
+     * Uses {@code data-a-dynamic-image} dimensions when present, else {@code naturalWidth/Height}.
+     */
+    private static final String SQUARE_IMAGE_SCRIPT = """
+            (function() {
+              var TOL = 0.15;
+              var MIN = 40;
+              function squareScore(w, h) {
+                if (w < MIN || h < MIN) return -1;
+                var r = w / h;
+                if (Math.abs(r - 1) > TOL) return -1;
+                return w * h;
+              }
+              var bestUrl = null;
+              var bestScore = -1;
+              function consider(url, w, h) {
+                var sc = squareScore(w, h);
+                if (sc > bestScore) {
+                  bestScore = sc;
+                  bestUrl = url;
+                }
+              }
+              var dynSel = '#imageBlock_feature_div [data-a-dynamic-image], #imageBlock [data-a-dynamic-image], '
+                + '#imageBlockRow [data-a-dynamic-image], #main-image-container [data-a-dynamic-image], #leftCol [data-a-dynamic-image]';
+              document.querySelectorAll(dynSel).forEach(function(node) {
+                var raw = node.getAttribute('data-a-dynamic-image');
+                if (!raw) return;
+                try {
+                  var obj = JSON.parse(raw);
+                  for (var url in obj) {
+                    if (!Object.prototype.hasOwnProperty.call(obj, url)) continue;
+                    var dim = obj[url];
+                    if (!Array.isArray(dim) || dim.length < 2) continue;
+                    consider(url, dim[0], dim[1]);
+                  }
+                } catch (e) { /* ignore */ }
+              });
+              document.querySelectorAll(
+                '#imageBlock_feature_div img, #imageBlock img, #altImages img, #imgTagWrapperId img, #landingImage, #main-image-container img'
+              ).forEach(function(el) {
+                if (!el || el.tagName !== 'IMG') return;
+                var src = el.currentSrc || el.src;
+                if (!src || src.indexOf('data:') === 0) return;
+                consider(src, el.naturalWidth, el.naturalHeight);
+              });
+              return bestUrl;
+            })();
+            """;
 
     /** Prefer core buybox; fall back to any visible price. */
     private static final List<By> PRICE_SCOPE_SELECTORS = List.of(
@@ -70,11 +121,13 @@ public final class AmazonProductPageScraper {
             }
             deal.setTitle(title);
 
-            String img = null;
-            try {
-                WebElement im = wait.until(ExpectedConditions.presenceOfElementLocated(LANDING_IMAGE));
-                img = im.getAttribute("src");
-            } catch (Exception ignored) {
+            String img = pickSquareProductImageUrl(driver);
+            if (img == null || img.isBlank()) {
+                try {
+                    WebElement im = wait.until(ExpectedConditions.presenceOfElementLocated(LANDING_IMAGE));
+                    img = im.getAttribute("src");
+                } catch (Exception ignored) {
+                }
             }
             deal.setImageUrl(img != null && !img.isBlank() ? img : null);
 
@@ -176,6 +229,24 @@ public final class AmazonProductPageScraper {
         } catch (Exception e) {
             return "";
         }
+    }
+
+    /**
+     * Prefers a gallery image with aspect ratio ~1:1 (within ~15%). Falls back to {@code null} so caller can use main image.
+     */
+    private static String pickSquareProductImageUrl(WebDriver driver) {
+        if (!(driver instanceof JavascriptExecutor jse)) {
+            return null;
+        }
+        try {
+            Object result = jse.executeScript(SQUARE_IMAGE_SCRIPT);
+            if (result instanceof String s && !s.isBlank()) {
+                return s.trim();
+            }
+        } catch (Exception ignored) {
+            // ignore
+        }
+        return null;
     }
 
     private static String truncate(String s, int max) {
