@@ -183,7 +183,10 @@ public final class AppConfig {
     private static String required(Function<String, String> env, String name) {
         String v = env.apply(name);
         if (v == null || v.isBlank()) {
-            throw new IllegalStateException("Missing required environment variable: " + name);
+            throw new IllegalStateException(
+                    "Missing required environment variable: " + name
+                            + ". Put it in a .env file in the working directory (copy from .env.example),"
+                            + " or export it in the shell. Note: .env.example is not loaded automatically.");
         }
         return v.trim();
     }
