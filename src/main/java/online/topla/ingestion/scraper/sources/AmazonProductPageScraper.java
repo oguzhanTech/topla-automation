@@ -163,7 +163,7 @@ public final class AmazonProductPageScraper {
         collectPricesFromContainers(driver, unique);
         for (By scope : PRICE_SCOPE_SELECTORS) {
             for (WebElement el : driver.findElements(scope)) {
-                BigDecimal p = parseMoneyTr(priceElementText(el));
+                BigDecimal p = parseMoneyTr(sanitizeAmazonPriceText(priceElementText(el)));
                 if (p != null && p.compareTo(BigDecimal.ZERO) > 0) {
                     unique.add(p);
                 }
@@ -171,6 +171,14 @@ public final class AmazonProductPageScraper {
             if (unique.size() >= 2) {
                 break;
             }
+        }
+
+        dropSpuriousKurusOnlyPrice(unique);
+        dropLikelyPerUnitPrice(unique);
+
+        BigDecimal labelListPrice = extractOncesiFiyat(driver);
+        if (labelListPrice != null && labelListPrice.compareTo(BigDecimal.ZERO) > 0) {
+            unique.add(labelListPrice);
         }
 
         List<BigDecimal> sorted = new ArrayList<>(unique);
@@ -184,24 +192,143 @@ public final class AmazonProductPageScraper {
         if (sorted.size() == 1) {
             BigDecimal p = sorted.get(0);
             deal.setCurrentPrice(p);
-            deal.setOriginalPrice(p);
+            deal.setOriginalPrice(labelListPrice != null ? labelListPrice : p);
+            if (labelListPrice != null && labelListPrice.compareTo(p) > 0) {
+                setDiscountFromPrices(deal, labelListPrice, p);
+            }
             return;
         }
 
-        BigDecimal dealPrice = sorted.get(0);
-        BigDecimal listPrice = sorted.get(sorted.size() - 1);
+        BigDecimal listPrice;
+        BigDecimal dealPrice;
+        if (labelListPrice != null && labelListPrice.compareTo(BigDecimal.ZERO) > 0) {
+            listPrice = labelListPrice;
+            dealPrice = bestDealBelowList(sorted, listPrice);
+        } else {
+            dealPrice = sorted.get(0);
+            listPrice = sorted.get(sorted.size() - 1);
+        }
         deal.setCurrentPrice(dealPrice);
         deal.setOriginalPrice(listPrice);
         if (listPrice.compareTo(dealPrice) > 0) {
-            BigDecimal pct = listPrice.subtract(dealPrice)
-                    .divide(listPrice, 6, RoundingMode.HALF_UP)
-                    .multiply(BigDecimal.valueOf(100))
-                    .setScale(2, RoundingMode.HALF_UP);
-            deal.setDiscountRate(pct);
+            setDiscountFromPrices(deal, listPrice, dealPrice);
         }
     }
 
-    /** Full `.a-price` block text often parses when `.a-offscreen` is empty in headless mode. */
+    private static void setDiscountFromPrices(NormalizedDeal deal, BigDecimal listPrice, BigDecimal dealPrice) {
+        BigDecimal pct = listPrice.subtract(dealPrice)
+                .divide(listPrice, 6, RoundingMode.HALF_UP)
+                .multiply(BigDecimal.valueOf(100))
+                .setScale(2, RoundingMode.HALF_UP);
+        deal.setDiscountRate(pct);
+    }
+
+    /** Liste fiyatının altındaki adaylar arasından satış fiyatı: genelde en yüksek (birim fiyatı atıldıktan sonra kalan ana tutar). */
+    private static BigDecimal bestDealBelowList(List<BigDecimal> sortedAsc, BigDecimal listPrice) {
+        BigDecimal best = null;
+        for (BigDecimal x : sortedAsc) {
+            if (x.compareTo(listPrice) >= 0) {
+                continue;
+            }
+            if (best == null || x.compareTo(best) > 0) {
+                best = x;
+            }
+        }
+        return best != null ? best : sortedAsc.get(0);
+    }
+
+    /**
+     * "170,00 TL (17,00 TL / kapsül)" gibi birim fiyatları DOM metninden çıkar; aksi halde 17 TL ayrı sayılıyordu.
+     */
+    static String sanitizeAmazonPriceText(String raw) {
+        if (raw == null || raw.isBlank()) {
+            return "";
+        }
+        String s = raw.replace('\u00a0', ' ');
+        s = s.replaceAll("(?i)\\([^)]*\\d[^)]*\\s*TL\\s*/\\s*[^)]+\\)", " ");
+        s = s.replaceAll(
+                "(?i)\\d{1,3}(?:[.,]\\d{2})?\\s*TL\\s*/\\s*(kapsül|adet|kg|ml|g|lt|tablet|paket|kutu|şişe)\\b[^\\n)]*",
+                " ");
+        return s.replaceAll("\\s+", " ").trim();
+    }
+
+    /** Önceki Fiyat: 215,95 TL (sayfada tekrar edebilir). */
+    private static BigDecimal extractOncesiFiyat(WebDriver driver) {
+        try {
+            String scope;
+            try {
+                scope = driver.findElement(By.id("corePrice_feature_div")).getText();
+            } catch (Exception e) {
+                scope = driver.findElement(By.tagName("body")).getText();
+            }
+            scope = scope.replace('\u00a0', ' ');
+            Matcher m = Pattern.compile(
+                    "Önceki\\s+Fiyat:?\\s*([\\d.]+\\s*,\\s*\\d{2})\\s*TL",
+                    Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CASE).matcher(scope);
+            if (m.find()) {
+                return parseMoneyTr(m.group(1).replace(" ", ""));
+            }
+        } catch (Exception ignored) {
+            // ignore
+        }
+        return null;
+    }
+
+    /**
+     * Birim fiyat (17) ile paket fiyatı (170) aynı havuzda kalınca en küçük yanlış seçiliyordu; ikinci fiyat birincinin ~5×'inden büyükse küçük olanı at.
+     */
+    private static void dropLikelyPerUnitPrice(Set<BigDecimal> unique) {
+        if (unique.size() < 2) {
+            return;
+        }
+        List<BigDecimal> sorted = new ArrayList<>(unique);
+        Collections.sort(sorted);
+        BigDecimal min = sorted.get(0);
+        BigDecimal second = sorted.get(1);
+        if (min.compareTo(BigDecimal.valueOf(100)) >= 0) {
+            return;
+        }
+        if (second.compareTo(min.multiply(BigDecimal.valueOf(5))) > 0) {
+            unique.remove(min);
+        }
+    }
+
+    /**
+     * Ayrı bir .a-offscreen yalnızca kuruşu ("52") verdiğinde {52, 287.52} oluşabiliyor;
+     * küçük değer, büyük fiyatın kuruş kısmıyla aynıysa ve oran makulse küçük olanı at.
+     */
+    private static void dropSpuriousKurusOnlyPrice(Set<BigDecimal> unique) {
+        if (unique.size() < 2) {
+            return;
+        }
+        List<BigDecimal> sorted = new ArrayList<>(unique);
+        Collections.sort(sorted);
+        BigDecimal smallest = sorted.get(0);
+        if (smallest.compareTo(BigDecimal.valueOf(100)) >= 0) {
+            return;
+        }
+        for (int i = 1; i < sorted.size(); i++) {
+            BigDecimal higher = sorted.get(i);
+            BigDecimal cents = higher.remainder(BigDecimal.ONE)
+                    .multiply(BigDecimal.valueOf(100))
+                    .setScale(0, RoundingMode.HALF_UP);
+            if (cents.compareTo(BigDecimal.ZERO) <= 0) {
+                continue;
+            }
+            if (smallest.compareTo(cents) != 0) {
+                continue;
+            }
+            if (higher.compareTo(smallest.multiply(BigDecimal.valueOf(4))) > 0) {
+                unique.remove(smallest);
+                return;
+            }
+        }
+    }
+
+    /**
+     * Full `.a-price` block text often parses when `.a-offscreen` is empty in headless mode.
+     * Satır satır parse etme: Amazon bazen "287" ve "52"yi ayrı satırda verir; "52" tek başına 52 TL sayılıyordu.
+     */
     private static void collectPricesFromContainers(WebDriver driver, Set<BigDecimal> unique) {
         for (By scope : PRICE_CONTAINER_SELECTORS) {
             for (WebElement el : driver.findElements(scope)) {
@@ -209,11 +336,11 @@ public final class AmazonProductPageScraper {
                 if (block == null || block.isBlank()) {
                     continue;
                 }
-                for (String line : block.split("[\\r\\n]+")) {
-                    BigDecimal p = parseMoneyTr(line);
-                    if (p != null && p.compareTo(BigDecimal.ZERO) > 0) {
-                        unique.add(p);
-                    }
+                String normalized = sanitizeAmazonPriceText(
+                        block.replaceAll("[\\r\\n]+", " ").trim().replaceAll("\\s+", " "));
+                BigDecimal p = parseMoneyTr(normalized);
+                if (p != null && p.compareTo(BigDecimal.ZERO) > 0) {
+                    unique.add(p);
                 }
             }
         }
@@ -380,6 +507,16 @@ public final class AmazonProductPageScraper {
             String num = turkish.group(1).replace(".", "").replace(",", ".");
             try {
                 return new BigDecimal(num);
+            } catch (Exception ignored) {
+            }
+        }
+        // Lira + kuruş ayrı span, virgül yok: "287 52" → 287,52 (satır kırpmasından önce de birleştirilir)
+        Matcher spaceKurus = Pattern.compile(
+                "(\\d{1,3}(?:\\.\\d{3})*)\\s+(\\d{2})(?:\\s*$|(?=[^0-9]))").matcher(s);
+        if (spaceKurus.find()) {
+            try {
+                String whole = spaceKurus.group(1).replace(".", "");
+                return new BigDecimal(whole + "." + spaceKurus.group(2));
             } catch (Exception ignored) {
             }
         }

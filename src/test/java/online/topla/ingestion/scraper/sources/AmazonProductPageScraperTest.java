@@ -29,6 +29,19 @@ class AmazonProductPageScraperTest {
     }
 
     @Test
+    void parseMoneyTr_liraAndKurusSplitAcrossSpans() {
+        assertEquals(new BigDecimal("287.52"), AmazonProductPageScraper.parseMoneyTr("287 52"));
+        assertEquals(new BigDecimal("287.52"), AmazonProductPageScraper.parseMoneyTr("287 52 TL"));
+    }
+
+    @Test
+    void sanitizeAmazonPriceText_stripsPerCapsuleUnit() {
+        String cleaned = AmazonProductPageScraper.sanitizeAmazonPriceText(
+                "170,00TL(17,00TL / kapsül)");
+        assertEquals(new BigDecimal("170.00"), AmazonProductPageScraper.parseMoneyTr(cleaned));
+    }
+
+    @Test
     void parseMoneyTr_usStyleDecimalStillWorks() {
         assertEquals(new BigDecimal("1.99"), AmazonProductPageScraper.parseMoneyTr("1.99"));
     }
