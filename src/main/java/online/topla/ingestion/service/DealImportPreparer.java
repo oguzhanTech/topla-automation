@@ -2,6 +2,8 @@ package online.topla.ingestion.service;
 
 import online.topla.ingestion.model.NormalizedDeal;
 
+import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.time.Instant;
 
 /**
@@ -37,6 +39,11 @@ public final class DealImportPreparer {
         }
         if (deal.getCountry() == null || deal.getCountry().isBlank()) {
             deal.setCountry("GLOBAL");
+        }
+        // deal-radar DB column deals.discount_percent is integer; fractional values cause HTTP 500.
+        if (deal.getDiscountRate() != null) {
+            BigDecimal rounded = deal.getDiscountRate().setScale(0, RoundingMode.HALF_UP);
+            deal.setDiscountRate(rounded);
         }
     }
 }

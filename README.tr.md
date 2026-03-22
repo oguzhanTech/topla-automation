@@ -2,6 +2,8 @@
 
 Önce `.env.example` dosyasını `.env` olarak kopyalayın ve **en az** şunları doldurun: `TOPLA_API_BASE_URL`, `TOPLA_IMPORT_API_KEY`, `TOPLA_ACTOR_KEY` (deal-radar tarafında tanımlı actor ile aynı olmalı).
 
+İsteğe bağlı: **`DEAL_CATEGORY`** — tüm import edilen fırsatların kategorisi (boş bırakılırsa scraper varsayılanı, örn. Amazon için Marketplace kalır). **`TOPLA_IMPORT_SEND_METADATA`** — varsayılan `false`; `true` yaparsanız deal-radar açıklamanın sonuna `[import]` ve metadata JSON ekleyebilir.
+
 Derleme ve çalıştırma:
 
 ```bash

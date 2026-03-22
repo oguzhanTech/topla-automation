@@ -33,6 +33,10 @@ public final class AppConfig {
     private final String amazonDealsHubUrl;
     private final int amazonDealsTargetCount;
     private final Long amazonDealsRandomSeed;
+    /** If non-blank, overrides {@link online.topla.ingestion.model.NormalizedDeal#setCategory} for every import. */
+    private final String ingestionDealCategory;
+    /** When false, import request omits metadata so deal-radar does not append JSON to description. */
+    private final boolean sendImportMetadata;
 
     private AppConfig(Builder b) {
         this.apiBaseUrl = b.apiBaseUrl;
@@ -52,6 +56,8 @@ public final class AppConfig {
         this.amazonDealsHubUrl = b.amazonDealsHubUrl;
         this.amazonDealsTargetCount = b.amazonDealsTargetCount;
         this.amazonDealsRandomSeed = b.amazonDealsRandomSeed;
+        this.ingestionDealCategory = b.ingestionDealCategory;
+        this.sendImportMetadata = b.sendImportMetadata;
     }
 
     public static AppConfig load() {
@@ -96,6 +102,8 @@ public final class AppConfig {
                 .orElse("https://www.amazon.com.tr/deals");
         int targetCount = Math.max(1, (int) parseLong(env, "AMAZON_DEALS_TARGET_COUNT", 5L));
         Long seed = parseOptionalLong(env, "AMAZON_DEALS_RANDOM_SEED");
+        String dealCategory = Optional.ofNullable(env.apply("DEAL_CATEGORY")).orElse("").trim();
+        boolean sendMeta = parseBooleanEnv(env, "TOPLA_IMPORT_SEND_METADATA", false);
 
         return new Builder()
                 .apiBaseUrl(trimTrailingSlash(base))
@@ -115,7 +123,17 @@ public final class AppConfig {
                 .amazonDealsHubUrl(hubUrl)
                 .amazonDealsTargetCount(targetCount)
                 .amazonDealsRandomSeed(seed)
+                .ingestionDealCategory(dealCategory)
+                .sendImportMetadata(sendMeta)
                 .build();
+    }
+
+    private static boolean parseBooleanEnv(Function<String, String> env, String name, boolean defaultValue) {
+        String v = env.apply(name);
+        if (v == null || v.isBlank()) {
+            return defaultValue;
+        }
+        return Boolean.parseBoolean(v.trim());
     }
 
     private static String parseAmazonMode(Function<String, String> env) {
@@ -275,6 +293,14 @@ public final class AppConfig {
         return amazonDealsRandomSeed;
     }
 
+    public String getIngestionDealCategory() {
+        return ingestionDealCategory;
+    }
+
+    public boolean isSendImportMetadata() {
+        return sendImportMetadata;
+    }
+
     public static final class Builder {
         private String apiBaseUrl;
         private String importApiKey;
@@ -293,6 +319,8 @@ public final class AppConfig {
         private String amazonDealsHubUrl = "https://www.amazon.com.tr/deals";
         private int amazonDealsTargetCount = 5;
         private Long amazonDealsRandomSeed = null;
+        private String ingestionDealCategory = "";
+        private boolean sendImportMetadata = false;
 
         public Builder apiBaseUrl(String apiBaseUrl) {
             this.apiBaseUrl = apiBaseUrl;
@@ -376,6 +404,16 @@ public final class AppConfig {
 
         public Builder amazonDealsRandomSeed(Long amazonDealsRandomSeed) {
             this.amazonDealsRandomSeed = amazonDealsRandomSeed;
+            return this;
+        }
+
+        public Builder ingestionDealCategory(String ingestionDealCategory) {
+            this.ingestionDealCategory = ingestionDealCategory != null ? ingestionDealCategory : "";
+            return this;
+        }
+
+        public Builder sendImportMetadata(boolean sendImportMetadata) {
+            this.sendImportMetadata = sendImportMetadata;
             return this;
         }
 

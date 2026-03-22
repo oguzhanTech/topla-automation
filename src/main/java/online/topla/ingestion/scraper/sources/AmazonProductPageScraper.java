@@ -8,10 +8,15 @@ import org.openqa.selenium.support.ui.ExpectedConditions;
 import org.openqa.selenium.support.ui.WebDriverWait;
 
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -22,7 +27,18 @@ public final class AmazonProductPageScraper {
 
     private static final By PRODUCT_TITLE = By.cssSelector("#productTitle");
     private static final By LANDING_IMAGE = By.cssSelector("#landingImage, #imgTagWrapperId img");
-    private static final By PRICE_OFFSCREEN = By.cssSelector(".a-price .a-offscreen");
+
+    /** Prefer core buybox; fall back to any visible price. */
+    private static final List<By> PRICE_SCOPE_SELECTORS = List.of(
+            By.cssSelector("#corePrice_feature_div .a-price .a-offscreen"),
+            By.cssSelector("#corePriceDisplay_desktop_feature_div .a-price .a-offscreen"),
+            By.cssSelector("#priceblock_dealprice .a-offscreen"),
+            By.cssSelector("#priceblock_ourprice .a-offscreen"),
+            By.cssSelector("#tp_price_block_total_price .a-offscreen"),
+            By.cssSelector("#twister-plus-price-data-price .a-offscreen"),
+            By.cssSelector("#apex_desktop .a-price .a-offscreen"),
+            By.cssSelector(".a-price .a-offscreen")
+    );
 
     private AmazonProductPageScraper() {
     }
@@ -65,12 +81,7 @@ public final class AmazonProductPageScraper {
             String desc = extractDescriptionSnippet(driver);
             deal.setDescription(desc);
 
-            BigDecimal price = findListedPrice(driver);
-            if (price == null) {
-                price = new BigDecimal("0.01");
-            }
-            deal.setCurrentPrice(price);
-            deal.setOriginalPrice(price);
+            applyPrices(driver, deal);
 
             deal.setExternalId("amazon-" + Integer.toHexString(canon.hashCode()));
             deal.setEndAt(Instant.now().plus(7, ChronoUnit.DAYS));
@@ -78,10 +89,93 @@ public final class AmazonProductPageScraper {
             deal.setTitle("Amazon TR (partial)");
             deal.setDescription("Limited DOM read: " + truncate(e.getMessage(), 400));
             deal.setCurrentPrice(new BigDecimal("0.01"));
+            deal.setOriginalPrice(new BigDecimal("0.01"));
             deal.setEndAt(Instant.now().plus(7, ChronoUnit.DAYS));
         }
 
         return deal;
+    }
+
+    private static final List<By> PRICE_CONTAINER_SELECTORS = List.of(
+            By.cssSelector("#corePrice_feature_div .a-price"),
+            By.cssSelector("#corePriceDisplay_desktop_feature_div .a-price"),
+            By.cssSelector("#apex_desktop .a-price"),
+            By.cssSelector("#tp_price_block_total_price .a-price"),
+            By.cssSelector("#twister-plus-price-data-price .a-price")
+    );
+
+    private static void applyPrices(WebDriver driver, NormalizedDeal deal) {
+        Set<BigDecimal> unique = new LinkedHashSet<>();
+        collectPricesFromContainers(driver, unique);
+        for (By scope : PRICE_SCOPE_SELECTORS) {
+            for (WebElement el : driver.findElements(scope)) {
+                BigDecimal p = parseMoneyTr(priceElementText(el));
+                if (p != null && p.compareTo(BigDecimal.ZERO) > 0) {
+                    unique.add(p);
+                }
+            }
+            if (unique.size() >= 2) {
+                break;
+            }
+        }
+
+        List<BigDecimal> sorted = new ArrayList<>(unique);
+        Collections.sort(sorted);
+
+        if (sorted.isEmpty()) {
+            deal.setCurrentPrice(new BigDecimal("0.01"));
+            deal.setOriginalPrice(new BigDecimal("0.01"));
+            return;
+        }
+        if (sorted.size() == 1) {
+            BigDecimal p = sorted.get(0);
+            deal.setCurrentPrice(p);
+            deal.setOriginalPrice(p);
+            return;
+        }
+
+        BigDecimal dealPrice = sorted.get(0);
+        BigDecimal listPrice = sorted.get(sorted.size() - 1);
+        deal.setCurrentPrice(dealPrice);
+        deal.setOriginalPrice(listPrice);
+        if (listPrice.compareTo(dealPrice) > 0) {
+            BigDecimal pct = listPrice.subtract(dealPrice)
+                    .divide(listPrice, 6, RoundingMode.HALF_UP)
+                    .multiply(BigDecimal.valueOf(100))
+                    .setScale(2, RoundingMode.HALF_UP);
+            deal.setDiscountRate(pct);
+        }
+    }
+
+    /** Full `.a-price` block text often parses when `.a-offscreen` is empty in headless mode. */
+    private static void collectPricesFromContainers(WebDriver driver, Set<BigDecimal> unique) {
+        for (By scope : PRICE_CONTAINER_SELECTORS) {
+            for (WebElement el : driver.findElements(scope)) {
+                String block = priceElementText(el);
+                if (block == null || block.isBlank()) {
+                    continue;
+                }
+                for (String line : block.split("[\\r\\n]+")) {
+                    BigDecimal p = parseMoneyTr(line);
+                    if (p != null && p.compareTo(BigDecimal.ZERO) > 0) {
+                        unique.add(p);
+                    }
+                }
+            }
+        }
+    }
+
+    private static String priceElementText(WebElement el) {
+        try {
+            String t = el.getText();
+            if (t != null && !t.isBlank()) {
+                return t;
+            }
+            String tc = el.getAttribute("textContent");
+            return tc != null ? tc : "";
+        } catch (Exception e) {
+            return "";
+        }
     }
 
     private static String truncate(String s, int max) {
@@ -120,26 +214,47 @@ public final class AmazonProductPageScraper {
         }
     }
 
-    private static BigDecimal findListedPrice(WebDriver driver) {
-        try {
-            List<WebElement> els = driver.findElements(PRICE_OFFSCREEN);
-            for (WebElement el : els) {
-                BigDecimal p = parseMoney(el.getText());
-                if (p != null) {
-                    return p;
-                }
-            }
-        } catch (Exception ignored) {
-        }
-        return null;
-    }
-
-    static BigDecimal parseMoney(String raw) {
+    /**
+     * Amazon TR: "1.299,99 TL", "₺1.299,99", "1299,99" vb.
+     */
+    static BigDecimal parseMoneyTr(String raw) {
         if (raw == null || raw.isBlank()) {
             return null;
         }
-        String t = raw.replace("\u00a0", " ").trim();
-        Matcher m = Pattern.compile("([\\d.,]+)").matcher(t);
+        String s = raw.replace("\u00a0", " ")
+                .replace("TL", "")
+                .replace("₺", "")
+                .replace("tl", "")
+                .trim();
+        Matcher turkish = Pattern.compile("(\\d{1,3}(?:\\.\\d{3})*,\\d{2})").matcher(s);
+        if (turkish.find()) {
+            String num = turkish.group(1).replace(".", "").replace(",", ".");
+            try {
+                return new BigDecimal(num);
+            } catch (Exception ignored) {
+            }
+        }
+        // Turkish grouping without decimals: "1.299" or "12.345.678" (no comma)
+        if (!s.contains(",")) {
+            Matcher trGrouped = Pattern.compile("(\\d{1,3}(?:\\.\\d{3})+)").matcher(s);
+            if (trGrouped.find()) {
+                String g = trGrouped.group(1);
+                if (g.matches("\\d{1,3}(?:\\.\\d{3})+")) {
+                    try {
+                        return new BigDecimal(g.replace(".", ""));
+                    } catch (Exception ignored) {
+                    }
+                }
+            }
+        }
+        Matcher simpleComma = Pattern.compile("(\\d+),(\\d{2})\\b").matcher(s);
+        if (simpleComma.find()) {
+            try {
+                return new BigDecimal(simpleComma.group(1) + "." + simpleComma.group(2));
+            } catch (Exception ignored) {
+            }
+        }
+        Matcher m = Pattern.compile("([\\d.,]+)").matcher(s);
         if (!m.find()) {
             return null;
         }

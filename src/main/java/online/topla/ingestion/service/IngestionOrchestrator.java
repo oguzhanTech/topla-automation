@@ -72,6 +72,10 @@ public class IngestionOrchestrator {
 
     private void processOneDeal(String runId, String source, NormalizedDeal deal, Set<String> seenKeysThisRun) {
         DealImportPreparer.applyImportDefaults(deal);
+        String cat = config.getIngestionDealCategory();
+        if (cat != null && !cat.isBlank()) {
+            deal.setCategory(cat.trim());
+        }
         ValidationResult vr = DealValidator.validate(deal);
         if (!vr.isValid()) {
             log.warn("Skipping invalid deal from {}: {}", source, vr.getErrors());
@@ -88,14 +92,18 @@ public class IngestionOrchestrator {
         request.setActorKey(config.getActorKey().isBlank() ? null : config.getActorKey());
         request.setSourceName(deal.getSourceName());
 
-        ImportMetadata meta = new ImportMetadata();
-        meta.setImportSource(source);
-        meta.setImportedVia(IMPORTED_VIA);
-        meta.setImportJobId(runId);
-        meta.setOriginalProductUrl(deal.getProductUrl());
-        meta.setExternalId(deal.getExternalId());
-        meta.setReviewStatus("pending_review");
-        request.setMetadata(meta);
+        if (config.isSendImportMetadata()) {
+            ImportMetadata meta = new ImportMetadata();
+            meta.setImportSource(source);
+            meta.setImportedVia(IMPORTED_VIA);
+            meta.setImportJobId(runId);
+            meta.setOriginalProductUrl(deal.getProductUrl());
+            meta.setExternalId(deal.getExternalId());
+            meta.setReviewStatus("pending_review");
+            request.setMetadata(meta);
+        } else {
+            request.setMetadata(null);
+        }
 
         try {
             importClient.importDeal(request);
