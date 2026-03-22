@@ -30,12 +30,16 @@ public class DealImportSteps {
     private List<NormalizedDeal> preparedDeals;
     private List<ValidationResult> batchResults;
 
+    /** Documented alignment with {@code AMAZON_DEALS_TARGET_COUNT} for hub mode. */
+    private int hubBatchSize;
+
     @Before
     public void resetScenarioState() {
         deal = null;
         result = null;
         preparedDeals = null;
         batchResults = null;
+        hubBatchSize = 0;
     }
 
     @Given("a normalized deal with required fields")
@@ -145,5 +149,16 @@ public class DealImportSteps {
             assertTrue(keys.add(k), "Duplicate ImportDedupKey: " + k);
         }
         assertEquals(preparedDeals.size(), keys.size());
+    }
+
+    @Given("a hub batch size of {int}")
+    public void aHubBatchSizeOf(int count) {
+        hubBatchSize = count;
+    }
+
+    @Then("the hub batch size is accepted")
+    public void theHubBatchSizeIsAccepted() {
+        assertTrue(hubBatchSize >= 1 && hubBatchSize <= 500,
+                "Set AMAZON_DEALS_TARGET_COUNT to match this value when running the jar (hub mode)");
     }
 }

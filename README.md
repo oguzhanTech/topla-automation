@@ -8,7 +8,7 @@ Topla web uygulamasından **bağımsız** çalışan bir Java servisi: harici e-
 |--------|----------|
 | `runner` | `DealIngestionApplication` — giriş noktası |
 | `service` | `IngestionOrchestrator` — scraper sırası, doğrulama, API çağrısı, hata izolasyonu |
-| `scraper` | `BaseScraper` + kaynak başına sınıflar (`AmazonTrScraper`, `TrendyolScraper`, …) |
+| `scraper` | `BaseScraper` + `AmazonTrScraper` (sabit URL’ler), `AmazonDealsHubScraper` (hub + rastgele N), `TrendyolScraper`, … |
 | `driver` | `WebDriverFactory` — headless, tarayıcı seçimi |
 | `client` | `ToplaDealsImportClient` — `POST /internal/deals/import` |
 | `model` | `NormalizedDeal`, `DealImportRequest`, `ImportMetadata` |
@@ -39,7 +39,13 @@ Zorunlu:
 
 - `TOPLA_ACTOR_KEY` — mantıksal bot kimliği (ör. `topla_trendyol_bot`, `topla_amazon_bot`). **deal-radar** tarafında `TOPLA_IMPORT_ACTOR_MAP` içinde aynı string → Supabase `auth.users` UUID eşlemesi tanımlı olmalı; istek gövdesinde ham kullanıcı UUID gönderilmez.
 - `INGESTION_SOURCES` — virgülle ayrılmış kaynaklar: `amazon`, `trendyol` (varsayılan: `amazon`).
-- `AMAZON_START_URL` — Amazon scraper’ın açacağı URL (ürün sayfası önerilir; yoksa `https://www.amazon.com.tr/`).
+- `AMAZON_START_URL` — tek sayfa modu: scraper’ın açacağı URL (ürün sayfası önerilir; yoksa `https://www.amazon.com.tr/`).
+- `AMAZON_URLS` — virgülle ayrılmış birden fazla ürün/liste URL’si; **her URL için bir deal** üretilir (ör. 2 deal için iki link). Tanımlıysa `AMAZON_START_URL` yok sayılır.
+- `AMAZON_MODE` — `urls` (varsayılan): yukarıdaki sabit URL listesi. `hub`: fırsat sayfası (`AMAZON_DEALS_HUB_URL`) açılır, indirim heuristiğiyle aday linkler toplanır, karıştırılır, en fazla `AMAZON_DEALS_TARGET_COUNT` ürün detayı çekilir. `java -jar` `.feature` dosyası okumaz; Cucumber’daki örnek adetleriyle aynı sayıyı burada verin.
+- `AMAZON_DEALS_HUB_URL` — hub modunda açılacak liste sayfası (varsayılan: `https://www.amazon.com.tr/deals`).
+- `AMAZON_DEALS_TARGET_COUNT` — hub modunda en fazla kaç deal (varsayılan: `5`, en az `1`).
+- `AMAZON_DEALS_RANDOM_SEED` — opsiyonel; verilirse karıştırma tekrarlanabilir olur.
+- Hub modu **bot koruması, DOM değişimi ve Amazon ToS** riski taşır; üretimde dikkatli kullanın.
 - `HEADLESS` — `true` / `false` (varsayılan: `true`)
 - `BROWSER` — `chrome`, `firefox`, `edge` (varsayılan: `chrome`)
 - `PAGE_LOAD_TIMEOUT_MS`, `IMPLICIT_WAIT_MS`
@@ -143,7 +149,7 @@ mvn test
 ```
 
 - JUnit: `DealValidatorTest`
-- Cucumber (BDD iskeleti): `CucumberSuiteTest` + `src/test/resources/features/`
+- Cucumber (BDD iskeleti): `CucumberSuiteTest` + `src/test/resources/features/` (`deal_import.feature`, `amazon_deals.feature` — hub adet sözleşmesi)
 
 ## Gelecek geliştirmeler (tasarıma uygun)
 

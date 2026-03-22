@@ -29,5 +29,6 @@ Feature: Deal import validation
 
     Examples:
       | count | source   | actorKey           | end_mode           |
+      | 2     | Amazon   | topla_amazon_bot   | fixed              |
       | 5     | Amazon   | topla_amazon_bot   | fixed              |
       | 3     | Trendyol | topla_trendyol_bot | unknown_far_future |

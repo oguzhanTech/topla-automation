@@ -108,8 +108,12 @@ public class IngestionOrchestrator {
         List<Function<WebDriver, ? extends BaseScraper>> list = new ArrayList<>();
         for (String token : config.getIngestionSourceTokens()) {
             switch (token) {
-                case "amazon" -> list.add(d -> new online.topla.ingestion.scraper.sources.AmazonTrScraper(d,
-                        config.getAmazonStartUrl()));
+                case "amazon" -> list.add(d -> {
+                    if ("hub".equalsIgnoreCase(config.getAmazonMode())) {
+                        return new online.topla.ingestion.scraper.sources.AmazonDealsHubScraper(d, config);
+                    }
+                    return new online.topla.ingestion.scraper.sources.AmazonTrScraper(d, config.getAmazonUrls());
+                });
                 case "trendyol" -> list.add(online.topla.ingestion.scraper.sources.TrendyolScraper::new);
                 default -> log.warn("Unknown INGESTION_SOURCES token, skipping: {}", token);
             }

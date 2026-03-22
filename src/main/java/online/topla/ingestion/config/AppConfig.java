@@ -27,7 +27,12 @@ public final class AppConfig {
     private final int apiConnectTimeoutMs;
     private final int apiRequestTimeoutMs;
     private final List<String> ingestionSourceTokens;
-    private final String amazonStartUrl;
+    private final List<String> amazonUrls;
+    /** {@code urls} = {@link #getAmazonUrls()} list; {@code hub} = deals hub + random pick. */
+    private final String amazonMode;
+    private final String amazonDealsHubUrl;
+    private final int amazonDealsTargetCount;
+    private final Long amazonDealsRandomSeed;
 
     private AppConfig(Builder b) {
         this.apiBaseUrl = b.apiBaseUrl;
@@ -42,7 +47,11 @@ public final class AppConfig {
         this.apiConnectTimeoutMs = b.apiConnectTimeoutMs;
         this.apiRequestTimeoutMs = b.apiRequestTimeoutMs;
         this.ingestionSourceTokens = List.copyOf(b.ingestionSourceTokens);
-        this.amazonStartUrl = b.amazonStartUrl;
+        this.amazonUrls = List.copyOf(b.amazonUrls);
+        this.amazonMode = b.amazonMode;
+        this.amazonDealsHubUrl = b.amazonDealsHubUrl;
+        this.amazonDealsTargetCount = b.amazonDealsTargetCount;
+        this.amazonDealsRandomSeed = b.amazonDealsRandomSeed;
     }
 
     public static AppConfig load() {
@@ -79,10 +88,14 @@ public final class AppConfig {
         int requestTimeout = (int) parseLong(env, "API_REQUEST_TIMEOUT_MS", 30_000L);
 
         List<String> sources = parseIngestionSources(env);
-        String amazonUrl = Optional.ofNullable(env.apply("AMAZON_START_URL"))
+        List<String> amazonUrls = parseAmazonUrls(env);
+        String amazonMode = parseAmazonMode(env);
+        String hubUrl = Optional.ofNullable(env.apply("AMAZON_DEALS_HUB_URL"))
                 .filter(s -> !s.isBlank())
                 .map(String::trim)
-                .orElse("https://www.amazon.com.tr/");
+                .orElse("https://www.amazon.com.tr/deals");
+        int targetCount = Math.max(1, (int) parseLong(env, "AMAZON_DEALS_TARGET_COUNT", 5L));
+        Long seed = parseOptionalLong(env, "AMAZON_DEALS_RANDOM_SEED");
 
         return new Builder()
                 .apiBaseUrl(trimTrailingSlash(base))
@@ -97,8 +110,52 @@ public final class AppConfig {
                 .apiConnectTimeoutMs(connectTimeout)
                 .apiRequestTimeoutMs(requestTimeout)
                 .ingestionSourceTokens(sources)
-                .amazonStartUrl(amazonUrl)
+                .amazonUrls(amazonUrls)
+                .amazonMode(amazonMode)
+                .amazonDealsHubUrl(hubUrl)
+                .amazonDealsTargetCount(targetCount)
+                .amazonDealsRandomSeed(seed)
                 .build();
+    }
+
+    private static String parseAmazonMode(Function<String, String> env) {
+        String m = Optional.ofNullable(env.apply("AMAZON_MODE")).orElse("urls").trim().toLowerCase(Locale.ROOT);
+        if ("hub".equals(m) || "urls".equals(m)) {
+            return m;
+        }
+        return "urls";
+    }
+
+    private static Long parseOptionalLong(Function<String, String> env, String name) {
+        String v = env.apply(name);
+        if (v == null || v.isBlank()) {
+            return null;
+        }
+        return Long.parseLong(v.trim());
+    }
+
+    /**
+     * {@code AMAZON_URLS} (comma-separated) wins; otherwise single {@code AMAZON_START_URL} or default storefront.
+     */
+    private static List<String> parseAmazonUrls(Function<String, String> env) {
+        String multi = env.apply("AMAZON_URLS");
+        if (multi != null && !multi.isBlank()) {
+            List<String> out = new ArrayList<>();
+            for (String part : multi.split(",")) {
+                String u = part.trim();
+                if (!u.isEmpty()) {
+                    out.add(u);
+                }
+            }
+            if (!out.isEmpty()) {
+                return Collections.unmodifiableList(out);
+            }
+        }
+        String single = Optional.ofNullable(env.apply("AMAZON_START_URL"))
+                .filter(s -> !s.isBlank())
+                .map(String::trim)
+                .orElse("https://www.amazon.com.tr/");
+        return List.of(single);
     }
 
     private static List<String> parseIngestionSources(Function<String, String> env) {
@@ -187,8 +244,32 @@ public final class AppConfig {
         return ingestionSourceTokens;
     }
 
+    /**
+     * First Amazon URL (compat with older single-URL setups).
+     */
     public String getAmazonStartUrl() {
-        return amazonStartUrl;
+        return amazonUrls.isEmpty() ? "https://www.amazon.com.tr/" : amazonUrls.get(0);
+    }
+
+    /** One or more product/listing pages to scrape in order (same browser session). */
+    public List<String> getAmazonUrls() {
+        return amazonUrls;
+    }
+
+    public String getAmazonMode() {
+        return amazonMode;
+    }
+
+    public String getAmazonDealsHubUrl() {
+        return amazonDealsHubUrl;
+    }
+
+    public int getAmazonDealsTargetCount() {
+        return amazonDealsTargetCount;
+    }
+
+    public Long getAmazonDealsRandomSeed() {
+        return amazonDealsRandomSeed;
     }
 
     public static final class Builder {
@@ -204,7 +285,11 @@ public final class AppConfig {
         private int apiConnectTimeoutMs = 10_000;
         private int apiRequestTimeoutMs = 30_000;
         private List<String> ingestionSourceTokens = List.of("amazon");
-        private String amazonStartUrl = "https://www.amazon.com.tr/";
+        private List<String> amazonUrls = List.of("https://www.amazon.com.tr/");
+        private String amazonMode = "urls";
+        private String amazonDealsHubUrl = "https://www.amazon.com.tr/deals";
+        private int amazonDealsTargetCount = 5;
+        private Long amazonDealsRandomSeed = null;
 
         public Builder apiBaseUrl(String apiBaseUrl) {
             this.apiBaseUrl = apiBaseUrl;
@@ -266,8 +351,28 @@ public final class AppConfig {
             return this;
         }
 
-        public Builder amazonStartUrl(String amazonStartUrl) {
-            this.amazonStartUrl = amazonStartUrl;
+        public Builder amazonUrls(List<String> amazonUrls) {
+            this.amazonUrls = amazonUrls;
+            return this;
+        }
+
+        public Builder amazonMode(String amazonMode) {
+            this.amazonMode = amazonMode;
+            return this;
+        }
+
+        public Builder amazonDealsHubUrl(String amazonDealsHubUrl) {
+            this.amazonDealsHubUrl = amazonDealsHubUrl;
+            return this;
+        }
+
+        public Builder amazonDealsTargetCount(int amazonDealsTargetCount) {
+            this.amazonDealsTargetCount = amazonDealsTargetCount;
+            return this;
+        }
+
+        public Builder amazonDealsRandomSeed(Long amazonDealsRandomSeed) {
+            this.amazonDealsRandomSeed = amazonDealsRandomSeed;
             return this;
         }
 
