@@ -58,4 +58,31 @@ class AmazonProductPageScraperTest {
         assertNotNull(p);
         assertEquals(new BigDecimal("1299.99"), p);
     }
+
+    @Test
+    void isReasonableListPrice_rejectsLargeUnlabeledGap() {
+        boolean accepted = AmazonProductPageScraper.isReasonableListPrice(
+                new BigDecimal("2978.90"),
+                new BigDecimal("1320.00"),
+                false);
+        assertEquals(false, accepted);
+    }
+
+    @Test
+    void isReasonableListPrice_acceptsExplicitLabeledOldPrice() {
+        boolean accepted = AmazonProductPageScraper.isReasonableListPrice(
+                new BigDecimal("2978.90"),
+                new BigDecimal("1320.00"),
+                true);
+        assertEquals(true, accepted);
+    }
+
+    @Test
+    void isReasonableListPrice_acceptsModerateUnlabeledGap() {
+        boolean accepted = AmazonProductPageScraper.isReasonableListPrice(
+                new BigDecimal("1499.00"),
+                new BigDecimal("1320.00"),
+                false);
+        assertEquals(true, accepted);
+    }
 }

@@ -87,9 +87,7 @@ public final class AmazonProductPageScraper {
             By.cssSelector("#priceblock_dealprice .a-offscreen"),
             By.cssSelector("#priceblock_ourprice .a-offscreen"),
             By.cssSelector("#tp_price_block_total_price .a-offscreen"),
-            By.cssSelector("#twister-plus-price-data-price .a-offscreen"),
-            By.cssSelector("#apex_desktop .a-price .a-offscreen"),
-            By.cssSelector(".a-price .a-offscreen")
+            By.cssSelector("#apex_desktop .a-price .a-offscreen")
     );
 
     private AmazonProductPageScraper() {
@@ -154,12 +152,12 @@ public final class AmazonProductPageScraper {
             By.cssSelector("#corePrice_feature_div .a-price"),
             By.cssSelector("#corePriceDisplay_desktop_feature_div .a-price"),
             By.cssSelector("#apex_desktop .a-price"),
-            By.cssSelector("#tp_price_block_total_price .a-price"),
-            By.cssSelector("#twister-plus-price-data-price .a-price")
+            By.cssSelector("#tp_price_block_total_price .a-price")
     );
 
     private static void applyPrices(WebDriver driver, NormalizedDeal deal) {
         Set<BigDecimal> unique = new LinkedHashSet<>();
+        BigDecimal primaryCurrentPrice = extractPrimaryCurrentPrice(driver, unique);
         collectPricesFromContainers(driver, unique);
         for (By scope : PRICE_SCOPE_SELECTORS) {
             for (WebElement el : driver.findElements(scope)) {
@@ -189,8 +187,11 @@ public final class AmazonProductPageScraper {
             deal.setOriginalPrice(new BigDecimal("0.01"));
             return;
         }
+        if (primaryCurrentPrice == null || primaryCurrentPrice.compareTo(BigDecimal.ZERO) <= 0) {
+            primaryCurrentPrice = sorted.get(0);
+        }
         if (sorted.size() == 1) {
-            BigDecimal p = sorted.get(0);
+            BigDecimal p = primaryCurrentPrice;
             deal.setCurrentPrice(p);
             deal.setOriginalPrice(labelListPrice != null ? labelListPrice : p);
             if (labelListPrice != null && labelListPrice.compareTo(p) > 0) {
@@ -199,14 +200,18 @@ public final class AmazonProductPageScraper {
             return;
         }
 
-        BigDecimal listPrice;
-        BigDecimal dealPrice;
-        if (labelListPrice != null && labelListPrice.compareTo(BigDecimal.ZERO) > 0) {
+        BigDecimal dealPrice = primaryCurrentPrice;
+        BigDecimal listPrice = dealPrice;
+        if (labelListPrice != null
+                && labelListPrice.compareTo(BigDecimal.ZERO) > 0
+                && labelListPrice.compareTo(dealPrice) > 0
+                && isReasonableListPrice(labelListPrice, dealPrice, true)) {
             listPrice = labelListPrice;
-            dealPrice = bestDealBelowList(sorted, listPrice);
         } else {
-            dealPrice = sorted.get(0);
-            listPrice = sorted.get(sorted.size() - 1);
+            BigDecimal candidate = closestHigherPrice(sorted, dealPrice);
+            if (candidate != null && isReasonableListPrice(candidate, dealPrice, false)) {
+                listPrice = candidate;
+            }
         }
         deal.setCurrentPrice(dealPrice);
         deal.setOriginalPrice(listPrice);
@@ -223,18 +228,44 @@ public final class AmazonProductPageScraper {
         deal.setDiscountRate(pct);
     }
 
-    /** Liste fiyatının altındaki adaylar arasından satış fiyatı: genelde en yüksek (birim fiyatı atıldıktan sonra kalan ana tutar). */
-    private static BigDecimal bestDealBelowList(List<BigDecimal> sortedAsc, BigDecimal listPrice) {
-        BigDecimal best = null;
-        for (BigDecimal x : sortedAsc) {
-            if (x.compareTo(listPrice) >= 0) {
-                continue;
-            }
-            if (best == null || x.compareTo(best) > 0) {
-                best = x;
+    private static BigDecimal extractPrimaryCurrentPrice(WebDriver driver, Set<BigDecimal> unique) {
+        for (By scope : PRICE_SCOPE_SELECTORS) {
+            for (WebElement el : driver.findElements(scope)) {
+                BigDecimal p = parseMoneyTr(sanitizeAmazonPriceText(priceElementText(el)));
+                if (p == null || p.compareTo(BigDecimal.ZERO) <= 0) {
+                    continue;
+                }
+                unique.add(p);
+                return p;
             }
         }
-        return best != null ? best : sortedAsc.get(0);
+        return null;
+    }
+
+    private static BigDecimal closestHigherPrice(List<BigDecimal> sortedAsc, BigDecimal dealPrice) {
+        for (BigDecimal p : sortedAsc) {
+            if (p.compareTo(dealPrice) > 0) {
+                return p;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Avoid treating variant/package bundle prices as list price when there is no explicit "Önceki Fiyat".
+     */
+    static boolean isReasonableListPrice(BigDecimal listPrice, BigDecimal dealPrice, boolean explicitLabel) {
+        if (listPrice == null || dealPrice == null) {
+            return false;
+        }
+        if (listPrice.compareTo(dealPrice) <= 0) {
+            return false;
+        }
+        if (explicitLabel) {
+            return true;
+        }
+        BigDecimal ratio = listPrice.divide(dealPrice, 4, RoundingMode.HALF_UP);
+        return ratio.compareTo(new BigDecimal("1.60")) <= 0;
     }
 
     /**
@@ -254,22 +285,22 @@ public final class AmazonProductPageScraper {
 
     /** Önceki Fiyat: 215,95 TL (sayfada tekrar edebilir). */
     private static BigDecimal extractOncesiFiyat(WebDriver driver) {
-        try {
-            String scope;
+        for (By container : List.of(
+                By.id("corePrice_feature_div"),
+                By.id("corePriceDisplay_desktop_feature_div"),
+                By.id("apex_desktop"))) {
             try {
-                scope = driver.findElement(By.id("corePrice_feature_div")).getText();
-            } catch (Exception e) {
-                scope = driver.findElement(By.tagName("body")).getText();
+                String scope = driver.findElement(container).getText();
+                scope = scope.replace('\u00a0', ' ');
+                Matcher m = Pattern.compile(
+                        "Önceki\\s+Fiyat\\w*:?\\s*([\\d.]+\\s*,\\s*\\d{2})\\s*TL",
+                        Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CASE).matcher(scope);
+                if (m.find()) {
+                    return parseMoneyTr(m.group(1).replace(" ", ""));
+                }
+            } catch (Exception ignored) {
+                // try next scope
             }
-            scope = scope.replace('\u00a0', ' ');
-            Matcher m = Pattern.compile(
-                    "Önceki\\s+Fiyat:?\\s*([\\d.]+\\s*,\\s*\\d{2})\\s*TL",
-                    Pattern.CASE_INSENSITIVE | Pattern.UNICODE_CASE).matcher(scope);
-            if (m.find()) {
-                return parseMoneyTr(m.group(1).replace(" ", ""));
-            }
-        } catch (Exception ignored) {
-            // ignore
         }
         return null;
     }
